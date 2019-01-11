@@ -26,12 +26,13 @@ run;
 with cleaner variable names for future analysis as well */
 data ipps_clean (rename = (__Payment_Adjustment_Factor = Payment_adjust )) ;
 set ipps; 
-keep hosp_num   Peer_Group_Assignment Dual_Proportion __Payment_Adjustment_Factor AMI COPD HF Pneumonia CABG THA_TKA;
+keep hosp_num   Peer_Group_Assignment Dual_Proportion __Payment_Adjustment_Factor AMI COPD HF Pneumonia CABG THA_TKA f0 f1 f2 f3 f4 f5;
 	
-	array err (6) ERR_for_AMI ERR_for_COPD ERR_for_HF ERR_for_Pneumonia ERR_for_CABG ERR_for_THA_TKA ;
-	array new (6) AMI COPD HF Pneumonia CABG THA_TKA ;
+	array err (12) ERR_for_AMI ERR_for_COPD ERR_for_HF ERR_for_Pneumonia ERR_for_CABG ERR_for_THA_TKA Number_of_Eligible_Discharges_fo Number_of_Eligible_Discharges_f1 
+				  Number_of_Eligible_Discharges_f2 Number_of_Eligible_Discharges_f3 Number_of_Eligible_Discharges_f4 Number_of_Eligible_Discharges_f5 ;
+	array new (12) AMI COPD HF Pneumonia CABG THA_TKA f0 f1 f2 f3 f4 f5 ;
 
-		do i = 1 to 6;
+		do i = 1 to 12;
 			new(i) = input(err(i), 11.);
 
 		end;
@@ -39,7 +40,7 @@ keep hosp_num   Peer_Group_Assignment Dual_Proportion __Payment_Adjustment_Facto
 run;
 /*Creates dataset that ranked vars will be merged to*/
 
-data output.ipps_ranked (rename = (hosp_num = hospital_ccn ))  ;
+data output.ipps_ranked1 (rename = (hosp_num = hospital_ccn ))  ;
 	set ipps_clean;
 	
 	
@@ -47,9 +48,10 @@ run;
 /*Macro function to create quartiles of ERR measurements. In order to prevent overwriting I needed to merge after each run of the macro. 
  will look into how to incorporate directly into the macro itself when I have more time*/
 
-%macro rank(measure);
+%macro rank(measure, n);
 proc rank  data = output.ipps_ranked out = ipps_&measure groups = 4;
 	var &measure;
+	where f&n ge 24;
 	ranks rank&measure;
 run;
  
@@ -61,54 +63,47 @@ data ipps_merge&measure;
 
 %mend rank;
 
-%rank(Payment_adjust)
-data output.ipps_ranked1;
-	merge output.ipps_ranked (in = a) ipps_mergePayment_adjust (in = b);
-		by Hospital_CCN;
-		if a;
-		if b;
-run;
-%rank(AMI)
+%rank(AMI, 0)
 data output.ipps_ranked2;
 	merge output.ipps_ranked1 (in = a) ipps_mergeAMI (in = b);
 		by Hospital_CCN;
 		if a;
-		if b;
+		
 run;
-%rank(COPD)
+%rank(COPD, 1)
 data output.ipps_ranked3;
 	merge output.ipps_ranked2 (in = a) ipps_mergeCOPD (in = b);
 		by Hospital_CCN;
 		if a;
-		if b;
+		
 run;
-%rank(HF)
+%rank(HF, 2)
 data output.ipps_ranked4;
 	merge output.ipps_ranked3 (in = a) ipps_mergeHF (in = b);
 		by Hospital_CCN;
 		if a;
-		if b;
+		
 run;
-%rank(Pneumonia)
+%rank(Pneumonia, 3)
 data output.ipps_ranked5;
 	merge output.ipps_ranked3 (in = a) ipps_mergePneumonia (in = b);
 		by Hospital_CCN;
 		if a;
-		if b;
+		
 run;
-%rank(CABG)
+%rank(CABG, 4)
 data output.ipps_ranked6;
 	merge output.ipps_ranked5 (in = a) ipps_mergeCABG (in = b);
 		by Hospital_CCN;
 		if a;
-		if b;
+		
 run;
-%rank(THA_TKA)
+%rank(THA_TKA, 5)
 data output.ipps_ranked7;
 	merge output.ipps_ranked6 (in = a) ipps_mergeTHA_TKA (in = b);
 		by Hospital_CCN;
 		if a;
-		if b;
+		
 run;
 
 /* Now we bring in the hospital general information data from revised 2016 flat files 
@@ -120,7 +115,7 @@ run;
 
 data output.hospital_info;
 	set hosp;
-	keep Hospital_CCN Hospital_Ownership;
+	keep Hospital_CCN Hospital_Ownership gov fp nfp;
 	if find(Hospital_Ownership, 'Government') > 0  then gov = 1; 
 		else gov = 0; 
 
@@ -240,6 +235,7 @@ run;
 /* Collect the data from the AHRF*/
 data ahrf_data;
 	set ahrf.ahrf_2017_2018;
+	keep fips poverty black white native asian hispanic homehealthagen hosp_beds_per_cap snf_beds_per_cap pcp_per_cap;
 	fips = f00002;
 	poverty = F1322315;
 	black = F1464010;
@@ -270,8 +266,27 @@ run;
 	if a;
 	if b;
 	run;
+	/* Descriptive statistis tables requested*/
+%sort(output.final_set, Peer_Group_Assignment) 
+	proc means data = output.final_set;
+	var Dual_Proportion;
+	by Peer_Group_Assignment;
+	run;
 
-	 
+	proc means data = output.final_set;
+	var poverty;
+	by Peer_Group_Assignment;
+	run;
+	
+	/* Regression anaysis*/
+/* THA_TKA HF COPD AMI Pneumonia CABG */
+
+
+proc logistic  data = output.final_set;
+	class fp (ref = '0' )gov (ref = '0' ) major_teach (ref = '0') large (ref = '0');
+	model top_ami (event = '1') = fp gov major_teach large poverty black native hispanic pcp_per_cap
+	hosp_beds_per_cap snf_beds_per_cap homehealthagen;
+	run;
 
 
 
