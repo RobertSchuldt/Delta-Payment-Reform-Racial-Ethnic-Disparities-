@@ -268,6 +268,18 @@ run;
 	run;
 	/* Descriptive statistis tables requested*/
 %sort(output.final_set, Peer_Group_Assignment) 
+
+
+title 'Peer Group Descriptive Dual Eligible and Poverty';
+title2 '(Range, median, mean, and SD)';
+
+ods escapechar = '^';
+goptions reset=all hsize=7in vsize=2in;
+ods pdf file='\\FileSrv1\CMS_Caregiver\DATA\Rural Urban Project\Descriptive Stats\Dual_Poverty.pdf' 
+startpage=no; 
+
+ods pdf text = "^{newline 4}"; 
+ods pdf text = "^{style [just=center]}Peer Groups";
 	proc means data = output.final_set;
 	var Dual_Proportion;
 	by Peer_Group_Assignment;
@@ -277,7 +289,7 @@ run;
 	var poverty;
 	by Peer_Group_Assignment;
 	run;
-	
+	ods pdf close;
 	/* Regression anaysis*/
 /* THA_TKA HF COPD AMI Pneumonia CABG */
 
