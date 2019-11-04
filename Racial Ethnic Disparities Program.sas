@@ -1,306 +1,373 @@
-/*** This is for the research project investigating the impact of Pay-for-performance on*** 
-racial/ethnic health disparities. Using IPPS, Hospital Compare, and AHRF. 
+/* Delta HRRP program to look at the impacts of the new payment reform on the quality of care 
+for patients in the delta region. 
 
-Program written by Robert Schuldt E-Mail: rschuldt@uams.edu
+Modification of original plan to add a DiD analysis for the project. As such, the 2018 data from the HRRP 
+must be added to the data set and the necessary covariates included as well. 
 
-*****************************************12/19/2018****************************************/
+Robert Schuldt
+10-23-2019
+*/
 
-libname output "E:\HRRP\12 19 2018";
-libname delta "E:\HRRP";
-libname ahrf "\\FileSrv1\CMS_Caregiver\DATA\HRRP\AHRF";
+/* bring in the data set */
 
-/* Macro for easy sorting */
-%macro sort(dataset, sorted);
-proc sort data = &dataset;
-by &sorted;
+proc import datafile ='***************** Stack Data\2018_HRRP_full.dta'
+DBMS = DTA out = hrrp replace;
 run;
+/*Rename the variables to match the other data set that I have worked with. */
+data hrrp2018;
+	set hrrp;
+	rename Acute_Myocardial_Infarction_Exce  = ERR_for_AMI;
+	rename Chronic_Obstructive_Pulmonary_Di = ERR_for_COPD; 
+	rename Excess_Readmission_Ratio_for_Hea = ERR_for_HF; 
+	rename Excess_Readmission_Ratio_for_Pne = ERR_for_Pneumonia; 
+	rename Coronary_Artery_Bypass_Graft_Exc = ERR_for_CABG;
+	rename Hip_Knee_Arthroplasty_Excess_Rea = ERR_for_THA_TKA;
+	rename Number_of_Acute_Myocardial_Infar = f0;
+	rename Number_of_Chronic_Obstructive_Pu = f1;
+	rename Number_of_Heart_Failure_Cases = f2;
+	rename Number_of_Pneumonia_Cases = f3;
+	rename Number_of_Coronary_Artery_Bypass = f4;
+	rename Number_of_Hip_Knee_Arthroplasty_ = f5;
 
-%mend sort;
 
-/*2019 IPPS Final Rule HRRP data set variable acquisition*/
 
-proc import datafile = "E:\HRRP\ipps2019"
-dbms= xlsx out = ipps replace;
-run;
-/* The ERR variables are character variables, but we need them to be numeric, this process replaces them as numeric 
-with cleaner variable names for future analysis as well */
-data ipps_clean (rename = (__Payment_Adjustment_Factor = Payment_adjust )) ;
-set ipps; 
-keep hosp_num   Peer_Group_Assignment Dual_Proportion __Payment_Adjustment_Factor AMI COPD HF Pneumonia CABG THA_TKA f0 f1 f2 f3 f4 f5;
+
+
+	prct_penalty= 1 - FY_2018_Readmissions_Adjustment_;
+
+	penalty = 0;
+	 if FY_2018_Readmissions_Adjustment_ < 1 then penalty = 1;
 	
-	array err (12) ERR_for_AMI ERR_for_COPD ERR_for_HF ERR_for_Pneumonia ERR_for_CABG ERR_for_THA_TKA Number_of_Eligible_Discharges_fo Number_of_Eligible_Discharges_f1 
-				  Number_of_Eligible_Discharges_f2 Number_of_Eligible_Discharges_f3 Number_of_Eligible_Discharges_f4 Number_of_Eligible_Discharges_f5 ;
-	array new (12) AMI COPD HF Pneumonia CABG THA_TKA f0 f1 f2 f3 f4 f5 ;
 
-		do i = 1 to 12;
-			new(i) = input(err(i), 11.);
 
-		end;
-		hosp_num = input(hospital_ccn, 6.);
 run;
-/*Creates dataset that ranked vars will be merged to*/
+/* I need to bring the POS data for identifying hospital types*/
+libname pos '******************lth_Policy_Management\Data\POS\2015\Data';
 
-data output.ipps_ranked1 (rename = (hosp_num = hospital_ccn ))  ;
-	set ipps_clean;
-	
-	
-run;
-/*Macro function to create quartiles of ERR measurements. In order to prevent overwriting I needed to merge after each run of the macro. 
- will look into how to incorporate directly into the macro itself when I have more time*/
-
-%macro rank(measure, n);
-proc rank  data = output.ipps_ranked out = ipps_&measure groups = 4;
-	var &measure;
-	where f&n ge 24;
-	ranks rank&measure;
-run;
- 
-data ipps_merge&measure;
-	set ipps_&measure;
-		if rank&measure = 0 then top_&measure = 1;
-			else top_&measure = 0;
+data pos_data;
+	set pos.pos_2015;
+	keep PRVDR_NUM FIPS_STATE_CD FIPS_CNTY_CD CRTFD_BED_CNT MDCL_SCHL_AFLTN_CD  GNRL_CNTL_TYPE_CD Provider;
+		where PRVDR_CTGRY_CD = '01';
+		rename PRVDR_NUM = Provider;
 	run;
 
-%mend rank;
+/* want to bring in my small sorting macro*/
+%include '********************esearch Work\SAS Macros\infile macros\sort.sas';
 
-%rank(AMI, 0)
-data output.ipps_ranked2;
-	merge output.ipps_ranked1 (in = a) ipps_mergeAMI (in = b);
-		by Hospital_CCN;
-		if a;
-		
-run;
-%rank(COPD, 1)
-data output.ipps_ranked3;
-	merge output.ipps_ranked2 (in = a) ipps_mergeCOPD (in = b);
-		by Hospital_CCN;
-		if a;
-		
-run;
-%rank(HF, 2)
-data output.ipps_ranked4;
-	merge output.ipps_ranked3 (in = a) ipps_mergeHF (in = b);
-		by Hospital_CCN;
-		if a;
-		
-run;
-%rank(Pneumonia, 3)
-data output.ipps_ranked5;
-	merge output.ipps_ranked3 (in = a) ipps_mergePneumonia (in = b);
-		by Hospital_CCN;
-		if a;
-		
-run;
-%rank(CABG, 4)
-data output.ipps_ranked6;
-	merge output.ipps_ranked5 (in = a) ipps_mergeCABG (in = b);
-		by Hospital_CCN;
-		if a;
-		
-run;
-%rank(THA_TKA, 5)
-data output.ipps_ranked7;
-	merge output.ipps_ranked6 (in = a) ipps_mergeTHA_TKA (in = b);
-		by Hospital_CCN;
-		if a;
-		
-run;
+%sort(pos_data, provider)
+%sort(hrrp2018, provider)
+/*Now I will merge with the HRRP file*/
 
-/* Now we bring in the hospital general information data from revised 2016 flat files 
-Sourced : https://data.medicare.gov/data/archives/hospital-compare                  */
-
-proc import datafile = "E:\HRRP\Hospital General Information"
-dbms= xlsx out = hosp replace;
-run;
-
-data output.hospital_info;
-	set hosp;
-	keep Hospital_CCN Hospital_Ownership gov fp nfp;
-	if find(Hospital_Ownership, 'Government') > 0  then gov = 1; 
-		else gov = 0; 
-
-	if find(Hospital_Ownership, 'Proprietary') > 0  then fp = 1;
-		else fp = 0; 
-
-	if find(Hospital_Ownership, 'Voluntary') > 0  then nfp = 1;
-		else nfp = 0; 
-
-run;
-/*Sorting the data to allow for a merge*/
-%sort(output.ipps_ranked7, hospital_ccn)
-%sort(output.hospital_info, hospital_ccn)
-
-data hosp_ipps;
-merge output.ipps_ranked7 (in = a) output.hospital_info (in = b);
-by hospital_ccn;
-if a;
-if b;
-run;
-
-/* The next data set has character CCN numbers*/
-
-data hosp_ippsmerge;
-set hosp_ipps;
-	hospital_num = put(hospital_ccn, $23.);
-	hospital_num = compress(hospital_num);
-run;
-/* Hospital 2016 Provider of service file 
-Sourced:https://www.cms.gov/Research-Statistics-Data-and-Systems/Downloadable-Public-Use-Files/Provider-of-Services/POS2015.html */
-
-proc import datafile = "E:\HRRP\pos_file"
-dbms= xlsx out = pos replace;
-run;
-
-proc means data = pos mean clm p75;
-var CRTFD_BED_CNT;
-run;
-
-data output.hosp_pos;
-	set pos;
-	keep PRVDR_CTGRY_CD  hospital_num FIPS_STATE_CD FIPS_CNTY_CD CRTFD_BED_CNT MDCL_SCHL_AFLTN_CD;
-		where PRVDR_CTGRY_CD = 1;
-
-/* When I created the character variable is had a huge number of spaces. This cleans up the spaces so we can merge*/
-		hospital_num = compress(Hospital_CCN);
-	run;
-%sort(hosp_ippsmerge, hospital_num)
-%sort(output.hosp_pos, hospital_num)
-/*merging the two sets together*/
-data hosp_posmerge;
-merge  hosp_ippsmerge (in = a) output.hosp_pos (in = b);
-by hospital_num;
-if a;
-if b;
-run;
-proc means data = hosp_posmerge  mean clm p75;;
-var CRTFD_BED_CNT;
-run;
-
-
-%macro fips(set, state, count);
-
-data hospital_fips; /*Chose whatever name you please*/
-	set &set;
-	drop single;
-
-/*For No Leading Zero States*/
-	length state_code $ 2;
-	state_code = "  ";
-		/* State FIPS with both digits*/
-
-	if &state ge 10 then state_code = &state;
-/**IF YOU ARE NOT USING THE TWO DIGIT STATE DELETE THE ABOVE LINE AND SUBSTITUTE THE FOLLOWING:
-	state_code = &state;
-***************************************************************************************/
-	length single $ 2;
-	single = "  ";
-		if &state lt 10 then single = &state;
-		if state_code = '' then state_code = put(input(single, best2.),z2.);
-		single ="";
-/*********************************end of fix for FIPS STATE CODE*********************/
-
-/* Fix the FIPS county code with two and one digit***********************************/
-	length county_code $ 3;
-	county_code = '';
-
-	/*because we are using the leading zeros we can just combine the two in one
-	fell swoop rather then break up into different data steps*/
-	if &count ge 100 then county_code = &count;
-	if &count lt 10 then single = &count;
-
-	if &count ge 10 and &count lt 100 then single = &count;
-
-	if county_code = '' then county_code = put(input(single, best3.),z3.);
-
-			length fips $ 5;
-			fips = cats(state_code,county_code);
-
-run;
-
-%mend fips;
-
-%fips( hosp_posmerge , FIPS_STATE_CD , FIPS_CNTY_CD)
-
-
-data hospital_id;
-	set hospital_fips;
-	drop hospital_num;
-
-
-	 if MDCL_SCHL_AFLTN_CD=1 then Major_teach= 1; 
-			else major_teach=0;
-		if CRTFD_BED_CNT >= 300 then large = 1;
-			else large = 0;
-run;
-/* Collect the data from the AHRF*/
-data ahrf_data;
-	set ahrf.ahrf_2017_2018;
-	keep fips poverty black white native asian hispanic homehealthagen hosp_beds_per_cap snf_beds_per_cap pcp_per_cap;
-	fips = f00002;
-	poverty = F1322315;
-	black = F1464010;
-	white =  F1463910;
-	native = F1465610;
-	asian = F1345710;
-	hispanic = F0454210;
-	pcp = F1467515;
-	hospital_beds = F0892115;
-	snf_beds = F1321316;
-	homehealthagen = F1321416;
-	pop_estimate_16 = F1198416;
-	pop_estimate_15 = F1198415;
-	pop_esimtate_10 = f0453010;
-
-	pcp_per_cap = (pcp/F1198415)*1000;
-	hosp_beds_per_cap = (hospital_beds/F1198415)*1000;
-	snf_beds_per_cap = (snf_beds/F1198415)*1000;
-
-run; 
-/*Prepare the two data sets to merge by the fips code*/
-%sort(ahrf_data, fips)
-%sort(hospital_id, fips)
- 
-	data output.final_set;
-	merge hospital_id (in = a) ahrf_data (in = b);
-	by fips;
+data hrrp_pos;
+	merge hrrp2018 (in = a) pos_data ( in = b);
+	by provider;
 	if a;
 	if b;
+	run; /* we lose 15 observations*/
+/* check what the ownership types are*/
+proc freq data = hrrp_pos;
+table GNRL_CNTL_TYPE_CD;
+title ' Ownership Classes';
+run; 
+
+%let own = GNRL_CNTL_TYPE_CD;
+
+data prep_set;
+	set hrrp_pos;
+	if &own = "04" then fp = 1;
+		else fp = 0;
+	if &own = '01' or &own = "02" or &own = "03" 
+		then nfp = 1;
+			else nfp = 0;
+	gov = 0;
+	if fp ne 1 and nfp ne 1 then gov = 1;
+
+	/*need to make the fips*/
+	length fips $ 5;
+	fips = cats('' ,FIPS_STATE_CD, FIPS_CNTY_CD);
+
+	 lsize=(CRTFD_BED_CNT>=300);
+
+	 year = 2018;
+
+	  if MDCL_SCHL_AFLTN_CD=1 then major_teach= 1; 
+			else major_teach=0;
+
+	 if MDCL_SCHL_AFLTN_CD=2 or MDCL_SCHL_AFLTN_CD=3 then minor_teach= 1; 
+			else minor_teach=0;
+
+		if fips = "12025" then fips = '12086';
+		if fips = '51515' then fips = '51019';
+	if fips = '02120' then fips = '02122'; 
+
+run;
+libname ahrf '************************icy_Management\Data\AHRF\2017-2018';
+
+/*Now need to bring in the AHRF data to complete the data set*/
+data ahrf_data;
+	set ahrf.ahrf_2017_2018;
+	keep fips poverty homehealthagen pop_estimate hosp_beds_per_cap snf_beds_per_cap pcp_per_cap pct_black unemployment;
+	fips = f00002;
+	poverty = F1332115;
+	homehealthagen = F1321415;
+	
+	pop_estimate = F1198415;
+	
+	pcp_per_cap = (F1467515/F1198415)*1000;
+	hosp_beds_per_cap = (F0892115/F1198415)*1000;
+	snf_beds_per_cap = (F1321315/F1198415)*1000;
+
+	pct_black = (( F1391015+ F1391115)/ F1198415)*100;
+	pct_hisp = (( F1392015 +   F1392115)/  F1198415)*100;
+	unemployment = F0679515;
+
+
+run; 
+
+
+%sort(ahrf_data, fips)
+%sort(prep_set, fips)
+
+data hrrp2018;
+	merge prep_set (in = a) ahrf_data (in = b);
+	by fips;
+	if a;
+
+run;
+
+proc import datafile = '************************k Data\delta_sep9_2019.dta' 
+dbms = dta out = hrrp2019 (rename =( Hospital_CCN = Provider)) replace; 
+run;
+
+data hrrp_2019;
+	set hrrp2019;
+	keep Provider Peer_Group_Assignment;
+run;
+
+
+%sort(hrrp_2019, Provider)
+%sort(hrrp2018, Provider)
+
+data hrrp_peer;
+	merge hrrp2018 (in = a) hrrp_2019 (in = b);
+
+	by provider;
+	if a;
+run;
+/*NOTE: There were 3399 observations read from the data set WORK.HRRP2018.
+NOTE: There were 3173 observations read from the data set WORK.HRRP_2019
+*/
+
+libname delta '*****************RRP';
+/*Need to bring in delta county identifier*/
+data counties;
+	set delta.delta_counties;
+	delta = 1;
+
+	length fips $ 5;
+
+	fips = put(FIPS_num, z5.);
+run;
+
+
+%sort(counties, fips)
+%sort(hrrp_peer, fips)
+
+data hrrp_2018;
+merge hrrp_peer (in = a) counties (in = b);
+by fips;
+if a;
+run;
+
+libname final '****************HRRP\10-29-2019';
+
+data final.hrrp_18;
+	set hrrp_2018;
+
+	if delta = . then delta = 0;
+	payment_adjustment = FY_2018_Readmissions_Adjustment_;
 	run;
-	/* Descriptive statistis tables requested*/
-%sort(output.final_set, Peer_Group_Assignment) 
+
+/*do the same for 2019 data so everything is the exact same should have written this as a macro, but would take too long to modify
+	will just be easy to copy/paste the code and run for 2019*/
+
+proc import datafile= '*******************leaned file.xlsx'
+dbms = XLSX out = hrrp replace;
+run;
+data hrrp2019pt2;
+	set hrrp;
+	rename ERR_for_AMI   = ERR_for_AMI;
+	rename ERR_for_COPD  = ERR_for_COPD; 
+	rename ERR_for_HF  = ERR_for_HF; 
+	rename ERR_for_Pneumonia  = ERR_for_Pneumonia; 
+	rename ERR_for_CABG  = ERR_for_CABG;
+	rename ERR_for_THA_TKA  = ERR_for_THA_TKA;
+	rename Number_of_Eligible_Discharges_fo = f0;
+	rename Number_of_Eligible_Discharges_f1 = f1;
+	rename Number_of_Eligible_Discharges_f2 = f2;
+	rename Number_of_Eligible_Discharges_f3 = f3;
+	rename Number_of_Eligible_Discharges_f4 = f4;
+	rename Number_of_Eligible_Discharges_f5 = f5;
+	rename Hospital_CCN = provider;
 
 
-title 'Peer Group Descriptive Dual Eligible and Poverty';
-title2 '(Range, median, mean, and SD)';
+	prct_penalty= 1 - __Payment_Adjustment_Factor;
 
-ods escapechar = '^';
-goptions reset=all hsize=7in vsize=2in;
-ods pdf file='\\FileSrv1\CMS_Caregiver\DATA\Rural Urban Project\Descriptive Stats\Dual_Poverty.pdf' 
-startpage=no; 
+	 if __Payment_Adjustment_Factor <1 then penalty = 1;
+	 	else penalty = 0;
 
-ods pdf text = "^{newline 4}"; 
-ods pdf text = "^{style [just=center]}Peer Groups";
-	proc means data = output.final_set;
-	var Dual_Proportion;
-	by Peer_Group_Assignment;
+
+
+run;
+
+libname pos '*******************licy_Management\Data\POS\2016\Data';
+
+data pos_data;
+	set pos.pos_2016;
+	keep PRVDR_NUM FIPS_STATE_CD FIPS_CNTY_CD CRTFD_BED_CNT MDCL_SCHL_AFLTN_CD  GNRL_CNTL_TYPE_CD Provider;
+		where PRVDR_CTGRY_CD = '01';
+		rename PRVDR_NUM = Provider;
 	run;
 
-	proc means data = output.final_set;
-	var poverty;
-	by Peer_Group_Assignment;
+
+	
+/* want to bring in my small sorting macro*/
+%include '********************huldt Research Work\SAS Macros\infile macros\sort.sas';
+
+%sort(pos_data, provider)
+%sort(hrrp2019pt2, provider)
+/*Now I will merge with the HRRP file*/
+
+data hrrp_pos;
+	merge hrrp2019pt2 (in = a) pos_data ( in = b);
+	by provider;
+	if a;
+	if b;
+	run; /* we lose 15 observations*/
+/* check what the ownership types are*/
+proc freq data = hrrp_pos;
+table GNRL_CNTL_TYPE_CD;
+title ' Ownership Classes';
+run; 
+
+%let own = GNRL_CNTL_TYPE_CD;
+
+data prep_set;
+	set hrrp_pos;
+	if &own = "04" then fp = 1;
+		else fp = 0;
+	if &own = '01' or &own = "02" or &own = "03" 
+		then nfp = 1;
+			else nfp = 0;
+	gov = 0;
+	if fp ne 1 and nfp ne 1 then gov = 1;
+
+	/*need to make the fips*/
+	length fips $ 5;
+	fips = cats('' ,FIPS_STATE_CD, FIPS_CNTY_CD);
+
+	 lsize=(CRTFD_BED_CNT>=300);
+
+	 year = 2019;
+
+	  if MDCL_SCHL_AFLTN_CD=1 then major_teach= 1; 
+			else major_teach=0;
+
+	 if MDCL_SCHL_AFLTN_CD=2 or MDCL_SCHL_AFLTN_CD=3 then minor_teach= 1; 
+			else minor_teach=0;
+
+			if fips = '02120' then fips = '02122';
+
+run;
+libname ahrf '******************nt\Data\AHRF\2017-2018';
+
+/*Now need to bring in the AHRF data to complete the data set*/
+data ahrf_data;
+	set ahrf.ahrf_2017_2018;
+	keep fips poverty homehealthagen pop_estimate hosp_beds_per_cap snf_beds_per_cap pcp_per_cap pct_black unemployment;
+	fips = f00002;
+	poverty = F1332116;
+	homehealthagen = F1321416;
+	
+	pop_estimate = F1198416;
+	
+	pcp_per_cap = (F1467516/F1198416)*1000;
+	hosp_beds_per_cap = (F0892116/F1198416)*1000;
+	snf_beds_per_cap = (F1321316/F1198416)*1000;
+
+	pct_black = (( F1391016+ F1391116)/ F1198416)*100;
+	pct_hisp = (( F1392016 +   F1392116)/  F1198416)*100;
+
+
+	unemployment = F0679516;
+
+
+run; 
+
+
+%sort(ahrf_data, fips)
+%sort(prep_set, fips)
+
+data hrrp2019;
+	merge prep_set (in = a) ahrf_data (in = b);
+	by fips;
+	if a;
+
+run;
+
+/*NOTE: There were 3399 observations read from the data set WORK.HRRP2018.
+NOTE: There were 3173 observations read from the data set WORK.HRRP_2019
+*/
+
+libname delta 'Z:\DATA\HRRP';
+/*Need to bring in delta county identifier*/
+data counties;
+	set delta.delta_counties;
+	delta = 1;
+
+	length fips $ 5;
+
+	fips = put(FIPS_num, z5.);
+run;
+
+
+%sort(counties, fips)
+%sort(hrrp2019, fips)
+
+data hrrp_2019;
+merge hrrp2019 (in = a) counties (in = b);
+by fips;
+if a;
+run;
+
+libname final 'Z:\DATA\HRRP\10-29-2019';
+
+data final.hrrp_19;
+	set hrrp_2019;
+
+	if delta = . then delta = 0;
+	payment_adjustment = __Payment_Adjustment_Factor;
+
 	run;
-	ods pdf close;
-	/* Regression anaysis*/
-/* THA_TKA HF COPD AMI Pneumonia CABG */
 
+data final.full_set_hhrp;
+	set
+final.hrrp_18
+final.hrrp_19;
 
-proc logistic  data = output.final_set;
-	class fp (ref = '0' )gov (ref = '0' ) major_teach (ref = '0') large (ref = '0');
-	model top_ami (event = '1') = fp gov major_teach large poverty black native hispanic pcp_per_cap
-	hosp_beds_per_cap snf_beds_per_cap homehealthagen;
+drop FY_2018_Readmissions_Adjustment_  aj aj ak am al ao ap aq as at au av aw ax ay az ba bb bc bd be bf bg bh __Payment_Adjustment_Factor;
+	if f0 >= 25 then qf_ami = 1; else qf_ami = 0;
+	if f2 >= 25 then qf_hf = 1; else qf_hf = 0;
+	if f3 >= 25 then qf_pn = 1; else qf_pn = 0;
+	if f1 >= 25 then qf_copd = 1; else qf_copd = 0;
+	if f4 >= 25 then qf_cabg = 1; else qf_cabg = 0;
+	if f5 >= 25 then qf_tha = 1; else qf_tha = 0;	
+
+		totcond=sum (qf_ami, qf_hf, qf_pn, qf_copd, qf_cabg, qf_tha);
+
 	run;
 
-
-
-
-
+	data test_fips;
+		set final.full_set_hhrp;
+		if fips = '02122' or fips = '12086' or fips = '51019';
+	run;
